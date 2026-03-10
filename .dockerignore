@@ -7,7 +7,6 @@
 data/
 *.md
 LICENSE
-fix.sh
 .DS_Store
 Thumbs.db
 .vscode/

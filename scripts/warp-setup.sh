@@ -34,7 +34,6 @@ for i in $(seq 1 30); do
     if warp-cli --accept-tos status | grep -qi "Connected"; then log "Connected!"; break; fi
     sleep 2
 done
-log "Updating danted.conf..."
 log "Setting up NAT masquerading..."
 iptables -t nat -F POSTROUTING
 iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE

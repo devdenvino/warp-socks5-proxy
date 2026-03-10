@@ -8,7 +8,7 @@ Connect any application through Cloudflare's network by pointing it at the conta
 
 ```bash
 # 1. Clone the repo
-git clone https://github.com/<your-user>/warp-proxy-setup.git
+git clone https://github.com/devdenvino/warp-proxy-setup.git
 cd warp-proxy-setup
 
 # 2. Create your .env from the template
@@ -83,8 +83,6 @@ docker compose logs -f
 # Manual connectivity test from inside the container
 docker exec warp-proxy curl -I https://cloudflare.com/cdn-cgi/trace
 ```
-
-A helper script `fix.sh` is included for advanced routing troubleshooting.
 
 ## License
 

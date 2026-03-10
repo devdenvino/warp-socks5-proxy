@@ -2,7 +2,7 @@ FROM ubuntu:22.04
 
 LABEL org.opencontainers.image.title="warp-socks5-proxy" \
       org.opencontainers.image.description="Cloudflare WARP client exposed as a SOCKS5 proxy via Dante" \
-      org.opencontainers.image.source="https://github.com/user/warp-proxy-setup" \
+      org.opencontainers.image.source="https://github.com/devdenvino/warp-proxy-setup" \
       org.opencontainers.image.licenses="MIT"
 
 ENV DEBIAN_FRONTEND=noninteractive
