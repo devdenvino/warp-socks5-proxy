@@ -1,0 +1,20 @@
+# Environment files with secrets
+.env
+*.env
+!.env.example
+
+# WARP data
+data/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker build context noise
+*.log

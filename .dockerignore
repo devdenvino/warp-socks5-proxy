@@ -1,0 +1,14 @@
+.git
+.github
+.gitignore
+.env
+*.env
+!.env.example
+data/
+*.md
+LICENSE
+fix.sh
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
