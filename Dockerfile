@@ -22,8 +22,6 @@ RUN apt-get update \
        > /etc/apt/sources.list.d/cloudflare-client.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends cloudflare-warp \
-    && apt-get remove -y gnupg \
-    && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && test -x /usr/bin/warp-svc
 
