@@ -4,14 +4,30 @@ WARP_INTERFACE="CloudflareWARP"
 log() { echo "[warp-setup] $*"; }
 log "Waiting for warp-svc..."
 for i in $(seq 1 30); do warp-cli --accept-tos status &>/dev/null && break || sleep 2; done
+
 log "Ensuring registration..."
-if ! warp-cli --accept-tos status | grep -qi "Connected"; then
-    # Use connector if token exists, else standard
+_registered=false
+# Check if already registered (status will show "Registration Missing" if not)
+if warp-cli --accept-tos status 2>&1 | grep -qi "Registration Missing"; then
+    _registered=false
+else
+    _registered=true
+fi
+
+if [ "$_registered" = false ]; then
     if [ -n "${WARP_CONNECTOR_TOKEN:-}" ]; then
+        # WARP Connector mode: register with the connector token from the dashboard.
+        # This registers the device as warp_connector@<team>.cloudflareaccess.com.
+        log "Registering as WARP Connector..."
         warp-cli --accept-tos connector new "$WARP_CONNECTOR_TOKEN" || true
     else
+        # Standard WARP mode: register using service token creds from MDM.
+        # Device will register as non_identity@<team>.cloudflareaccess.com.
+        log "Registering with standard WARP (service token via MDM)..."
         warp-cli --accept-tos registration new || true
     fi
+    # Wait for registration to take effect
+    sleep 3
 fi
 log "Adding local exclusions..."
 # WARP_EXCLUDE_RANGES: comma-separated list of CIDRs to exclude from the WARP tunnel

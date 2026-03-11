@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     image: ${DOCKER_IMAGE:-warp-socks5-proxy}:${DOCKER_TAG:-latest}
     container_name: warp-proxy
+    hostname: ${HOST_NAME:-warp-socks5-proxy}
 
     # ── Required capabilities for TUN + routing ───────────────────────────────
     cap_add:
@@ -18,8 +19,8 @@ services:
     # ── WARP credentials (loaded from .env file) ─────────────────────────────
     environment:
       WARP_ORG: "${WARP_ORG}"
-      CF_ACCESS_CLIENT_ID: "${CF_ACCESS_CLIENT_ID}"
-      CF_ACCESS_CLIENT_SECRET: "${CF_ACCESS_CLIENT_SECRET}"
+      CF_ACCESS_CLIENT_ID: "${CF_ACCESS_CLIENT_ID:-}"
+      CF_ACCESS_CLIENT_SECRET: "${CF_ACCESS_CLIENT_SECRET:-}"
       WARP_CONNECTOR_TOKEN: "${WARP_CONNECTOR_TOKEN:-}"
       WARP_EXCLUDE_RANGES: "${WARP_EXCLUDE_RANGES:-}"
       WARP_ACCEPT_TOS: "true"

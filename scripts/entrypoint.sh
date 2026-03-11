@@ -12,13 +12,36 @@ fi
 
 # ── Validate required environment variables ──────────────────────────────────
 : "${WARP_ORG:?WARP_ORG must be set to your Cloudflare Zero Trust organization name}"
-: "${CF_ACCESS_CLIENT_ID:?CF_ACCESS_CLIENT_ID must be set}"
-: "${CF_ACCESS_CLIENT_SECRET:?CF_ACCESS_CLIENT_SECRET must be set}"
+
+# When using WARP Connector mode, service token creds are not needed.
+# When using standard WARP mode, service token creds are required.
+if [ -z "${WARP_CONNECTOR_TOKEN:-}" ]; then
+    : "${CF_ACCESS_CLIENT_ID:?CF_ACCESS_CLIENT_ID must be set (or provide WARP_CONNECTOR_TOKEN for connector mode)}"
+    : "${CF_ACCESS_CLIENT_SECRET:?CF_ACCESS_CLIENT_SECRET must be set (or provide WARP_CONNECTOR_TOKEN for connector mode)}"
+fi
 
 # ── Setup Cloudflare Zero Trust MDM file ──────────────────────────────────────
-echo "[entrypoint] Setting up MDM configuration for Zero Trust..."
 mkdir -p /var/lib/cloudflare-warp
-cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
+
+if [ -n "${WARP_CONNECTOR_TOKEN:-}" ]; then
+    # WARP Connector mode: MDM must NOT contain auth_client_id/auth_client_secret.
+    # Registration is handled by warp-cli using the connector token, which
+    # registers the device as warp_connector@<team>.cloudflareaccess.com.
+    echo "[entrypoint] Setting up MDM for WARP Connector mode..."
+    cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<dict>
+  <key>organization</key>
+  <string>${WARP_ORG}</string>
+  <key>service_mode</key>
+  <string>warp</string>
+</dict>
+EOF
+else
+    # Standard WARP mode: use service token auth for headless enrollment.
+    # Device will register as non_identity@<team>.cloudflareaccess.com.
+    echo "[entrypoint] Setting up MDM for standard WARP mode..."
+    cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <dict>
   <key>organization</key>
@@ -27,14 +50,11 @@ cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
   <string>${CF_ACCESS_CLIENT_ID}</string>
   <key>auth_client_secret</key>
   <string>${CF_ACCESS_CLIENT_SECRET}</string>
-  <key>warp_connector_token</key>
-  <string>${WARP_CONNECTOR_TOKEN:-}</string>
   <key>service_mode</key>
   <string>warp</string>
-  <key>enable_teams_registration</key>
-  <true/>
 </dict>
 EOF
+fi
 
 # ── Generate danted.conf with runtime ALLOWED_RANGES ─────────────────────────
 ALLOWED="${ALLOWED_RANGES:-0.0.0.0/0}"
