@@ -6,6 +6,10 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [main]
+  schedule:
+    # Check daily at 06:00 UTC for new cloudflare-warp releases
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
 
 env:
   REGISTRY: ghcr.io
@@ -16,7 +20,64 @@ permissions:
   packages: write
 
 jobs:
+  # ── Detect the latest cloudflare-warp package version ──────────────────────
+  detect-version:
+    runs-on: ubuntu-latest
+    outputs:
+      warp_version: ${{ steps.warp.outputs.version }}
+      image_tag: ${{ steps.resolve.outputs.tag }}
+      skip_build: ${{ steps.check.outputs.skip }}
+    steps:
+      - name: Query latest cloudflare-warp version from apt repo
+        id: warp
+        run: |
+          # Add Cloudflare apt repo and query the candidate version
+          curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
+            | sudo gpg --yes --dearmor -o /usr/share/keyrings/cf-warp.gpg
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/cf-warp.gpg] \
+            https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
+            | sudo tee /etc/apt/sources.list.d/cloudflare-client.list
+          sudo apt-get update -qq
+          WARP_VER=$(apt-cache policy cloudflare-warp | grep Candidate | awk '{print $2}')
+          echo "version=${WARP_VER}" >> "$GITHUB_OUTPUT"
+          echo "Detected cloudflare-warp version: ${WARP_VER}"
+
+      - name: Resolve image tag (git tag wins, else warp version)
+        id: resolve
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Strip leading 'v' from git tag if present
+            TAG="${GITHUB_REF_NAME#v}"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "Using git tag: ${TAG}"
+          else
+            echo "tag=${{ steps.warp.outputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "Using warp package version: ${{ steps.warp.outputs.version }}"
+          fi
+
+      - name: Check if image already exists (skip redundant scheduled builds)
+        id: check
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.resolve.outputs.tag }}"
+          # Query GHCR for existing tags via the packages API
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $(echo $GH_TOKEN | base64)" \
+            "https://${{ env.REGISTRY }}/v2/${IMAGE_NAME}/manifests/${TAG}")
+          if [[ "$STATUS" == "200" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Image tag ${TAG} already exists – skipping build"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Image tag ${TAG} not found – will build"
+          fi
+
+  # ── Build & push the Docker image ─────────────────────────────────────────
   build-and-push:
+    needs: detect-version
+    if: needs.detect-version.outputs.skip_build != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -42,11 +103,12 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=sha
+            type=semver,pattern={{version}},enable=${{ github.ref_type == 'tag' }}
+            type=semver,pattern={{major}}.{{minor}},enable=${{ github.ref_type == 'tag' }}
+            type=semver,pattern={{major}},enable=${{ github.ref_type == 'tag' }}
+            type=raw,value=${{ needs.detect-version.outputs.image_tag }}
             type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -55,6 +117,9 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: |
+            ${{ steps.meta.outputs.labels }}
+            org.opencontainers.image.version=${{ needs.detect-version.outputs.image_tag }}
+            dev.warp.version=${{ needs.detect-version.outputs.warp_version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
