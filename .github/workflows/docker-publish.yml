@@ -46,10 +46,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          # Lowercase the image name – GHCR requires lowercase paths
+          IMAGE_NAME_LC=$(echo "${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
 
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            # Git tag always wins – no patch suffix needed
             TAG="${GITHUB_REF_NAME#v}"
             echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
             echo "Using git tag: ${TAG}"
@@ -58,12 +58,28 @@ jobs:
 
           BASE_TAG="${{ steps.warp.outputs.version }}"
 
-          # Helper: check if a tag exists in GHCR
+          # Obtain a pull-scoped token from GHCR using GITHUB_TOKEN
+          ghcr_token() {
+            curl -sf -u "_:${GH_TOKEN}" \
+              "https://ghcr.io/token?service=ghcr.io&scope=repository:${IMAGE_NAME_LC}:pull" \
+              | jq -r '.token // empty'
+          }
+
+          # Check if a tag exists in GHCR
           tag_exists() {
+            local token
+            token=$(ghcr_token)
+            if [[ -z "$token" ]]; then
+              # Can't get token = package probably doesn't exist yet
+              echo "  (no GHCR token – package may not exist yet)"
+              return 1
+            fi
             local status
             status=$(curl -s -o /dev/null -w "%{http_code}" \
-              -H "Authorization: Bearer $(echo "$GH_TOKEN" | base64)" \
-              "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/manifests/$1")
+              -H "Authorization: Bearer ${token}" \
+              -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+              "https://ghcr.io/v2/${IMAGE_NAME_LC}/manifests/$1")
+            echo "  checking $1 -> HTTP $status"
             [[ "$status" == "200" ]]
           }
 
