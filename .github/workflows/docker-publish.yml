@@ -26,7 +26,6 @@ jobs:
     outputs:
       warp_version: ${{ steps.warp.outputs.version }}
       image_tag: ${{ steps.resolve.outputs.tag }}
-      skip_build: ${{ steps.check.outputs.skip }}
     steps:
       - name: Query latest cloudflare-warp version from apt repo
         id: warp
@@ -42,42 +41,57 @@ jobs:
           echo "version=${WARP_VER}" >> "$GITHUB_OUTPUT"
           echo "Detected cloudflare-warp version: ${WARP_VER}"
 
-      - name: Resolve image tag (git tag wins, else warp version)
+      - name: Resolve image tag (git tag wins, else warp version + patch)
         id: resolve
-        run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            # Strip leading 'v' from git tag if present
-            TAG="${GITHUB_REF_NAME#v}"
-            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-            echo "Using git tag: ${TAG}"
-          else
-            echo "tag=${{ steps.warp.outputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "Using warp package version: ${{ steps.warp.outputs.version }}"
-          fi
-
-      - name: Check if image already exists (skip redundant scheduled builds)
-        id: check
-        if: github.event_name == 'schedule'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ steps.resolve.outputs.tag }}"
-          # Query GHCR for existing tags via the packages API
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            -H "Authorization: Bearer $(echo $GH_TOKEN | base64)" \
-            "https://${{ env.REGISTRY }}/v2/${IMAGE_NAME}/manifests/${TAG}")
-          if [[ "$STATUS" == "200" ]]; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "Image tag ${TAG} already exists – skipping build"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "Image tag ${TAG} not found – will build"
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Git tag always wins – no patch suffix needed
+            TAG="${GITHUB_REF_NAME#v}"
+            echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "Using git tag: ${TAG}"
+            exit 0
           fi
+
+          BASE_TAG="${{ steps.warp.outputs.version }}"
+
+          # Helper: check if a tag exists in GHCR
+          tag_exists() {
+            local status
+            status=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $(echo "$GH_TOKEN" | base64)" \
+              "https://${{ env.REGISTRY }}/v2/${{ env.IMAGE_NAME }}/manifests/$1")
+            [[ "$status" == "200" ]]
+          }
+
+          # If the base tag doesn't exist yet, use it as-is
+          if ! tag_exists "$BASE_TAG"; then
+            echo "tag=${BASE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "Tag ${BASE_TAG} is available"
+            exit 0
+          fi
+
+          # Otherwise, find the next available patch number
+          PATCH=1
+          while tag_exists "${BASE_TAG}-patch-${PATCH}"; do
+            echo "  ${BASE_TAG}-patch-${PATCH} exists, trying next..."
+            PATCH=$((PATCH + 1))
+            if [[ $PATCH -gt 100 ]]; then
+              echo "::error::Exceeded 100 patch iterations – something is wrong"
+              exit 1
+            fi
+          done
+
+          FINAL_TAG="${BASE_TAG}-patch-${PATCH}"
+          echo "tag=${FINAL_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using patched tag: ${FINAL_TAG}"
 
   # ── Build & push the Docker image ─────────────────────────────────────────
   build-and-push:
     needs: detect-version
-    if: needs.detect-version.outputs.skip_build != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
