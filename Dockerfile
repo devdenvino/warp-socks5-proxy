@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim
+FROM ubuntu:22.04
 
 LABEL org.opencontainers.image.title="warp-socks5-proxy" \
       org.opencontainers.image.description="Cloudflare WARP client exposed as a SOCKS5 proxy via Dante" \
@@ -8,17 +8,19 @@ LABEL org.opencontainers.image.title="warp-socks5-proxy" \
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ── System dependencies + Cloudflare WARP client (single layer) ───────────────
+# Debug tools (jq, dnsutils, iputils-ping, net-tools, procps) are omitted to
+# reduce image size. Install them on-demand:
+#   docker exec warp-proxy apt-get update && apt-get install -y <pkg>
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       curl gnupg ca-certificates \
-       iproute2 iptables net-tools \
+       curl gnupg lsb-release ca-certificates \
+       iproute2 iptables \
        dante-server supervisor \
-       jq dnsutils iputils-ping procps \
     && ARCH=$(dpkg --print-architecture) \
     && curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \
        | gpg --yes --dearmor -o /usr/share/keyrings/cloudflare-warp-archive-keyring.gpg \
     && echo "deb [arch=${ARCH} signed-by=/usr/share/keyrings/cloudflare-warp-archive-keyring.gpg] \
-       https://pkg.cloudflareclient.com/ bookworm main" \
+       https://pkg.cloudflareclient.com/ $(lsb_release -cs) main" \
        > /etc/apt/sources.list.d/cloudflare-client.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends cloudflare-warp \
