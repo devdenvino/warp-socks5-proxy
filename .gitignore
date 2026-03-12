@@ -18,3 +18,4 @@ Thumbs.db
 
 # Docker build context noise
 *.log
+phases/**

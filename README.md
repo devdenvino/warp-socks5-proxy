@@ -13,7 +13,7 @@ cd warp-proxy-setup
 
 # 2. Create your .env from the template
 cp .env.example .env
-# Edit .env with your Cloudflare Zero Trust credentials
+# Edit .env – set WARP_MODE and the credentials for your chosen mode
 
 # 3. Start the container
 docker compose up -d
@@ -27,16 +27,54 @@ curl -x socks5h://localhost:1080 https://cloudflare.com/cdn-cgi/trace
 All options are set through environment variables in your `.env` file.
 See [.env.example](.env.example) for the full list with descriptions.
 
+### WARP modes
+
+The container supports three modes, selected via `WARP_MODE`:
+
+| Mode | Description | Required variables |
+|---|---|---|
+| `zero-trust` (default) | Cloudflare Zero Trust / Teams via service token | `WARP_ORG`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` |
+| `warp-plus` | Consumer WARP+ with a license key | `WARP_LICENSE_KEY` |
+| `free` | Free Cloudflare WARP, no credentials needed | — |
+
+**Zero Trust (default – existing behaviour):**
+
+```env
+WARP_MODE=zero-trust
+WARP_ORG=my-company
+CF_ACCESS_CLIENT_ID=xxx.access
+CF_ACCESS_CLIENT_SECRET=xxx
+```
+
+**WARP+ (consumer paid):**
+
+```env
+WARP_MODE=warp-plus
+WARP_LICENSE_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+**Free WARP:**
+
+```env
+WARP_MODE=free
+```
+
+### Environment variables
+
 | Variable | Required | Description |
 |---|---|---|
-| `WARP_ORG` | **Yes** | Cloudflare Zero Trust organization slug |
-| `CF_ACCESS_CLIENT_ID` | **Yes** | Service token Client ID |
-| `CF_ACCESS_CLIENT_SECRET` | **Yes** | Service token Client Secret |
-| `WARP_CONNECTOR_TOKEN` | No | Connector token (for tunnel mode) |
+| `WARP_MODE` | No | `zero-trust` (default), `warp-plus`, or `free` |
+| `WARP_ORG` | zero-trust | Cloudflare Zero Trust organization slug |
+| `CF_ACCESS_CLIENT_ID` | zero-trust* | Service token Client ID |
+| `CF_ACCESS_CLIENT_SECRET` | zero-trust* | Service token Client Secret |
+| `WARP_CONNECTOR_TOKEN` | No | Connector token (alternative to service token creds) |
+| `WARP_LICENSE_KEY` | warp-plus | WARP+ license key from [one.one.one.one](https://one.one.one.one) |
 | `WARP_EXCLUDE_RANGES` | No | Comma-separated CIDRs to exclude from tunnel |
 | `SOCKS5_PORT` | No | Proxy listen port (default: `1080`) |
 | `SOCKS5_LISTEN` | No | Host bind address (default: `0.0.0.0`) |
 | `ALLOWED_RANGES` | No | CIDRs allowed to connect to proxy (default: `0.0.0.0/0`) |
+
+\* Not required when `WARP_CONNECTOR_TOKEN` is provided instead.
 
 ### Multi-server setup
 

@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # entrypoint.sh – container bootstrap
+#
+# Supported WARP_MODE values:
+#   zero-trust  (default) – enroll into a Cloudflare Zero Trust org via service token
+#   warp-plus             – consumer WARP+ with a license key
+#   free                  – free Cloudflare WARP, no credentials required
 
 set -euo pipefail
 
@@ -10,25 +15,38 @@ if [[ ! -c /dev/net/tun ]]; then
     exit 1
 fi
 
-# ── Validate required environment variables ──────────────────────────────────
-: "${WARP_ORG:?WARP_ORG must be set to your Cloudflare Zero Trust organization name}"
+WARP_MODE="${WARP_MODE:-zero-trust}"
+echo "[entrypoint] WARP_MODE=${WARP_MODE}"
 
-# When using WARP Connector mode, service token creds are not needed.
-# When using standard WARP mode, service token creds are required.
-if [ -z "${WARP_CONNECTOR_TOKEN:-}" ]; then
-    : "${CF_ACCESS_CLIENT_ID:?CF_ACCESS_CLIENT_ID must be set (or provide WARP_CONNECTOR_TOKEN for connector mode)}"
-    : "${CF_ACCESS_CLIENT_SECRET:?CF_ACCESS_CLIENT_SECRET must be set (or provide WARP_CONNECTOR_TOKEN for connector mode)}"
-fi
+# ── Validate required environment variables per mode ─────────────────────────
+case "$WARP_MODE" in
+    zero-trust)
+        : "${WARP_ORG:?WARP_ORG must be set in zero-trust mode}"
+        if [ -z "${WARP_CONNECTOR_TOKEN:-}" ]; then
+            : "${CF_ACCESS_CLIENT_ID:?CF_ACCESS_CLIENT_ID must be set (or provide WARP_CONNECTOR_TOKEN)}"
+            : "${CF_ACCESS_CLIENT_SECRET:?CF_ACCESS_CLIENT_SECRET must be set (or provide WARP_CONNECTOR_TOKEN)}"
+        fi
+        ;;
+    warp-plus)
+        : "${WARP_LICENSE_KEY:?WARP_LICENSE_KEY must be set in warp-plus mode}"
+        ;;
+    free)
+        echo "[entrypoint] Free WARP mode – no credentials required."
+        ;;
+    *)
+        echo "[entrypoint] ERROR: Unknown WARP_MODE '${WARP_MODE}'. Use: zero-trust | warp-plus | free"
+        exit 1
+        ;;
+esac
 
 # ── Setup Cloudflare Zero Trust MDM file ──────────────────────────────────────
 mkdir -p /var/lib/cloudflare-warp
 
-if [ -n "${WARP_CONNECTOR_TOKEN:-}" ]; then
-    # WARP Connector mode: MDM must NOT contain auth_client_id/auth_client_secret.
-    # Registration is handled by warp-cli using the connector token, which
-    # registers the device as warp_connector@<team>.cloudflareaccess.com.
-    echo "[entrypoint] Setting up MDM for WARP Connector mode..."
-    cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
+case "$WARP_MODE" in
+    zero-trust)
+        if [ -n "${WARP_CONNECTOR_TOKEN:-}" ]; then
+            echo "[entrypoint] Setting up MDM for WARP Connector mode..."
+            cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <dict>
   <key>organization</key>
@@ -37,11 +55,9 @@ if [ -n "${WARP_CONNECTOR_TOKEN:-}" ]; then
   <string>warp</string>
 </dict>
 EOF
-else
-    # Standard WARP mode: use service token auth for headless enrollment.
-    # Device will register as non_identity@<team>.cloudflareaccess.com.
-    echo "[entrypoint] Setting up MDM for standard WARP mode..."
-    cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
+        else
+            echo "[entrypoint] Setting up MDM for Zero Trust (service token) mode..."
+            cat <<EOF > /var/lib/cloudflare-warp/mdm.xml
 <?xml version="1.0" encoding="UTF-8"?>
 <dict>
   <key>organization</key>
@@ -54,14 +70,23 @@ else
   <string>warp</string>
 </dict>
 EOF
-fi
+        fi
+        ;;
+    warp-plus|free)
+        # Consumer modes: remove any stale MDM file to prevent unintended org enrollment.
+        rm -f /var/lib/cloudflare-warp/mdm.xml
+        echo "[entrypoint] No MDM file written (consumer mode)."
+        ;;
+esac
 
-# ── Generate danted.conf with runtime ALLOWED_RANGES ─────────────────────────
+# ── Generate danted.conf with runtime port + ALLOWED_RANGES ──────────────────
 ALLOWED="${ALLOWED_RANGES:-0.0.0.0/0}"
-echo "[entrypoint] Configuring Dante with allowed client ranges: ${ALLOWED}"
+SOCKS_PORT="${SOCKS5_PORT:-1080}"
+echo "[entrypoint] Configuring Dante on port ${SOCKS_PORT} with allowed client ranges: ${ALLOWED}"
+
 cat <<DCONF > /etc/danted.conf
 logoutput: /var/log/danted.log
-internal: 0.0.0.0 port = 1080
+internal: 0.0.0.0 port = ${SOCKS_PORT}
 external: CloudflareWARP
 
 socksmethod: none
@@ -69,7 +94,6 @@ clientmethod: none
 
 DCONF
 
-# Generate client pass and socks pass blocks for each allowed range
 IFS=',' read -ra _allowed <<< "$ALLOWED"
 for _range in "${_allowed[@]}"; do
     _range="$(echo "$_range" | tr -d ' ')"
@@ -88,6 +112,14 @@ socks pass {
 
 DCONF
 done
+
+# ── Set hostname for WARP device identification ──────────────────────────────
+# The WARP client reports the system hostname as the device name in the dashboard.
+# Explicitly set it here so warp-svc picks it up before registration.
+if [ -n "${HOST_NAME:-}" ]; then
+    echo "[entrypoint] Setting hostname to: ${HOST_NAME}"
+    hostname "${HOST_NAME}" 2>/dev/null || true
+fi
 
 # ── Create log directories ────────────────────────────────────────────────────
 mkdir -p /var/log/supervisor
