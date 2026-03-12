@@ -144,6 +144,10 @@ jobs:
       - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
+        env:
+          # Emit annotations at both manifest and index levels so GHCR picks up
+          # org.opencontainers.image.description on the multi-arch manifest index.
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
