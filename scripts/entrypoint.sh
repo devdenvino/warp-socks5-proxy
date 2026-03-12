@@ -79,6 +79,12 @@ EOF
         ;;
 esac
 
+# ── Force IPv4 DNS preference ─────────────────────────────────────────────────
+# Dante resolves hostnames itself (socks5h). If a host resolves to IPv6 (AAAA)
+# but the external interface has no IPv6, Dante returns SOCKS5 error 8.
+# Setting higher precedence for IPv4-mapped addresses forces A-record preference.
+echo "precedence ::ffff:0:0/96  100" >> /etc/gai.conf
+
 # ── Generate danted.conf with runtime port + ALLOWED_RANGES ──────────────────
 ALLOWED="${ALLOWED_RANGES:-0.0.0.0/0}"
 SOCKS_PORT="${SOCKS5_PORT:-1080}"

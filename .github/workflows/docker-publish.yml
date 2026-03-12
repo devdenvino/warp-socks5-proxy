@@ -26,6 +26,7 @@ jobs:
     outputs:
       warp_version: ${{ steps.warp.outputs.version }}
       image_tag: ${{ steps.resolve.outputs.tag }}
+      should_build: ${{ steps.resolve.outputs.should_build }}
     steps:
       - name: Query latest cloudflare-warp version from apt repo
         id: warp
@@ -52,6 +53,7 @@ jobs:
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             TAG="${GITHUB_REF_NAME#v}"
             echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
             echo "Using git tag: ${TAG}"
             exit 0
           fi
@@ -83,14 +85,24 @@ jobs:
             [[ "$status" == "200" ]]
           }
 
-          # If the base tag doesn't exist yet, use it as-is
+          # If the base tag doesn't exist yet, this is a new cloudflare-warp version – always build
           if ! tag_exists "$BASE_TAG"; then
             echo "tag=${BASE_TAG}" >> "$GITHUB_OUTPUT"
-            echo "Tag ${BASE_TAG} is available"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Tag ${BASE_TAG} is new – will build"
             exit 0
           fi
 
-          # Otherwise, find the next available patch number
+          # Base tag already exists in GHCR.
+          # On scheduled runs there is nothing new to ship – skip the build.
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            echo "Scheduled run: cloudflare-warp ${BASE_TAG} is already published. Skipping build."
+            echo "tag=${BASE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "should_build=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Non-scheduled trigger (push / workflow_dispatch): find the next available patch number
           PATCH=1
           while tag_exists "${BASE_TAG}-patch-${PATCH}"; do
             echo "  ${BASE_TAG}-patch-${PATCH} exists, trying next..."
@@ -103,11 +115,13 @@ jobs:
 
           FINAL_TAG="${BASE_TAG}-patch-${PATCH}"
           echo "tag=${FINAL_TAG}" >> "$GITHUB_OUTPUT"
+          echo "should_build=true" >> "$GITHUB_OUTPUT"
           echo "Using patched tag: ${FINAL_TAG}"
 
   # ── Build & push the Docker image ─────────────────────────────────────────
   build-and-push:
     needs: detect-version
+    if: needs.detect-version.outputs.should_build == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

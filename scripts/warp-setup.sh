@@ -74,6 +74,15 @@ fi
 
 # ── Add local IP exclusions ───────────────────────────────────────────────────
 log "Adding local exclusions..."
+
+# Always exclude Docker bridge subnets so container-to-container traffic and
+# Docker port-forwarding are not tunnelled through WARP.
+# WARP's routing table includes 172.0.0.0/6 which swallows 172.16-31.x.x.
+for _docker_cidr in 172.16.0.0/12 192.168.0.0/16 10.0.0.0/8; do
+    log "  Auto-excluding Docker/RFC-1918 range: $_docker_cidr"
+    warp-cli --accept-tos tunnel ip add-range "$_docker_cidr" || true
+done
+
 if [ -n "${WARP_EXCLUDE_RANGES:-}" ]; then
     IFS=',' read -ra _ranges <<< "$WARP_EXCLUDE_RANGES"
     for _cidr in "${_ranges[@]}"; do
@@ -83,13 +92,13 @@ if [ -n "${WARP_EXCLUDE_RANGES:-}" ]; then
         warp-cli --accept-tos tunnel ip add-range "$_cidr" || true
     done
 else
-    log "  WARP_EXCLUDE_RANGES not set, skipping local exclusions"
+    log "  WARP_EXCLUDE_RANGES not set, skipping additional custom exclusions"
 fi
 
 # ── Set device name in Cloudflare dashboard ───────────────────────────────
 if [ -n "${HOST_NAME:-}" ] && [ -f /var/lib/cloudflare-warp/reg.json ]; then
-    _reg_id=$(grep -o '"registration_id":"[^"]*"' /var/lib/cloudflare-warp/reg.json | cut -d'"' -f4)
-    _api_token=$(grep -o '"api_token":"[^"]*"' /var/lib/cloudflare-warp/reg.json | cut -d'"' -f4)
+    _reg_id=$(grep -o '"registration_id":"[^"]*"' /var/lib/cloudflare-warp/reg.json | cut -d'"' -f4 || true)
+    _api_token=$(grep -o '"api_token":"[^"]*"' /var/lib/cloudflare-warp/reg.json | cut -d'"' -f4 || true)
     if [ -n "$_reg_id" ] && [ -n "$_api_token" ]; then
         log "Setting device name to: ${HOST_NAME}"
         _resp=$(curl -sf -X PATCH \
@@ -133,6 +142,25 @@ iptables -t nat -C POSTROUTING -o eth0 -j MASQUERADE 2>/dev/null \
     || iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
 iptables -t nat -C POSTROUTING -o "$WARP_INTERFACE" -j MASQUERADE 2>/dev/null \
     || iptables -t nat -A POSTROUTING -o "$WARP_INTERFACE" -j MASQUERADE
+
+# ── Allow inbound SOCKS5 connections on eth0 (WARP client blocks eth0 by default) ──
+# The Cloudflare WARP client installs an nftables policy that drops all input AND
+# output on non-loopback interfaces. Accept all traffic on eth0 (Docker bridge)
+# since eth0 is not an internet-facing interface; CloudflareWARP handles egress.
+_socks_port="${SOCKS5_PORT:-1080}"
+log "Opening eth0 in WARP nftables (bypass drop policy)..."
+nft add rule inet cloudflare-warp input  iif "eth0" accept 2>/dev/null || true
+nft add rule inet cloudflare-warp output oif "eth0" accept 2>/dev/null || true
+
+# ── Fix WARP IP policy routing for Docker bridge traffic ──────────────────────
+# In Zero Trust Connector mode, warp-cli tunnel ip add-range is ignored.
+# WARP's table 65743 routes RFC-1918 ranges through CloudflareWARP, which means
+# reply packets from Dante back to Docker bridge clients are misrouted.
+# Add high-priority ip rules to force RFC-1918 traffic to use the main table.
+log "Adding ip rules for RFC-1918 → main table (priority 100)..."
+for _cidr in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16; do
+    ip rule add to "$_cidr" table main priority 100 2>/dev/null || true
+done
 
 # ── Start Dante ───────────────────────────────────────────────────────────────
 log "Restarting Dante..."
