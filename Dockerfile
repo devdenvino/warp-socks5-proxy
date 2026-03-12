@@ -14,7 +14,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        curl gnupg lsb-release ca-certificates \
-       iproute2 iptables \
+       iproute2 iptables nftables \
        dante-server supervisor \
     && ARCH=$(dpkg --print-architecture) \
     && curl -fsSL https://pkg.cloudflareclient.com/pubkey.gpg \

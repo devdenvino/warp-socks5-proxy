@@ -165,5 +165,8 @@ jobs:
             ${{ steps.meta.outputs.labels }}
             org.opencontainers.image.version=${{ needs.detect-version.outputs.image_tag }}
             dev.warp.version=${{ needs.detect-version.outputs.warp_version }}
+          # annotations propagates labels to the multi-arch manifest index (OCI image index),
+          # which is what GHCR displays as the package description.
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
